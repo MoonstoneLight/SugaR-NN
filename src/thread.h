@@ -66,7 +66,7 @@ public:
   
   Pawns::Table pawnsTable;
   Material::Table materialTable;
-  size_t pvIdx, pvLast, shuffleExts;
+  size_t pvIdx, pvLast;
   int selDepth, nmpMinPly;
   int64_t visits, allScores;
   Color nmpColor;
