@@ -81,7 +81,7 @@ It is a collection of one or more positions stored with the following format (si
 - _best move score_
 
 This file is loaded in an hashtable at the engine load and updated each time the engine receive quit or stop uci command.
-When BrainLearn starts a new game or when we have max 8 pieces on the chessboard, the learning is activated and the hash table updated each time the engine has a best score
+When SugaR-NN starts a new game or when we have max 8 pieces on the chessboard, the learning is activated and the hash table updated each time the engine has a best score
 at a depth >= 4 PLIES, according to Stockfish aspiration window.
 
 At the engine loading, there is an automatic merge to experience.bin files, if we put the other ones, based on the following convention:
