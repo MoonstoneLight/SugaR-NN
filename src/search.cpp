@@ -71,6 +71,9 @@ namespace {
   // Different node types, used as a template parameter
   enum NodeType { NonPV, PV };
 
+  constexpr uint64_t ttHitAverageWindow     = 4096;
+  constexpr uint64_t ttHitAverageResolution = 1024;
+
   // Razor and futility margins
   constexpr int RazorMargin = 661;
   Value futility_margin(Depth d, bool improving) {
@@ -434,6 +437,7 @@ void Thread::search() {
       multiPV = std::max(multiPV, (size_t)4);
 
   multiPV = std::min(multiPV, rootMoves.size());
+  ttHitAverage = ttHitAverageWindow * ttHitAverageResolution / 2;
 
   int ct = int(Options["Contempt"]) * PawnValueEg / 100; // From centipawns
 
@@ -774,6 +778,9 @@ namespace {
     ttMove =  rootNode ? thisThread->rootMoves[thisThread->pvIdx].pv[0]
             : ttHit    ? tte->move() : MOVE_NONE;
     ttPv = PvNode || (ttHit && tte->is_pv());
+    // thisThread->ttHitAverage can be used to approximate the running average of ttHit
+    thisThread->ttHitAverage =   (ttHitAverageWindow - 1) * thisThread->ttHitAverage / ttHitAverageWindow
+                                + ttHitAverageResolution * ttHit;
 
     // At non-PV nodes we check for an early TT cutoff
     if (  !PvNode
@@ -1197,12 +1204,59 @@ moves_loop: // When in check, search starts from here
       captureOrPromotion = pos.capture_or_promotion(move);
       movedPiece = pos.moved_piece(move);
       givesCheck = pos.gives_check(move);
+      //full threads patch begin
       if(thisThread->fullSearch)
       {
-	  newDepth = depth - 1 + extension;
+		  newDepth = depth - 1;
           goto skipExtensionAndPruning;
       }
-      // Step 13. Extensions (~70 Elo)
+      //full threads patch end
+
+      // Calculate new depth for this move
+      newDepth = depth - 1;
+
+      // Step 13. Pruning at shallow depth (~170 Elo)
+      if (  !rootNode
+          && pos.non_pawn_material(us)
+          && bestValue > VALUE_MATED_IN_MAX_PLY)
+      {
+          //from Kelly begin
+          if (isSingularExtension && moveCount > 1)
+          {
+          	continue;
+		  }
+		  //from Kelly end
+          // Skip quiet moves if movecount exceeds our FutilityMoveCount threshold
+          moveCountPruning = moveCount >= futility_move_count(improving, depth);
+
+          if (   !captureOrPromotion
+              && !givesCheck
+              && (!PvNode || !pos.advanced_pawn_push(move) || pos.non_pawn_material(~us) > BishopValueMg))
+          {
+              // Reduced depth of the next LMR search
+              int lmrDepth = std::max(newDepth - reduction(improving, depth, moveCount), 0);
+
+              // Countermoves based pruning (~20 Elo)
+              if (   lmrDepth < 4 + ((ss-1)->statScore > 0 || (ss-1)->moveCount == 1)
+                  && (*contHist[0])[movedPiece][to_sq(move)] < CounterMovePruneThreshold
+                  && (*contHist[1])[movedPiece][to_sq(move)] < CounterMovePruneThreshold)
+                  continue;
+
+              // Futility pruning: parent node (~2 Elo)
+              if (   lmrDepth < 6
+                  && !inCheck
+                  && ss->staticEval + 250 + 211 * lmrDepth <= alpha)
+                  continue;
+
+              // Prune moves with negative SEE (~10 Elo)
+              if (!pos.see_ge(move, Value(-(31 - std::min(lmrDepth, 18)) * lmrDepth * lmrDepth)))
+                  continue;
+          }
+          else if (!pos.see_ge(move, Value(-199) * depth)) // (~20 Elo)
+                  continue;
+      }
+
+      // Step 14. Extensions (~70 Elo)
 
       // Singular extension search (~60 Elo). If all moves but one fail low on a
       // search of (alpha-s, beta-s), and just one fails high on (alpha, beta),
@@ -1229,17 +1283,12 @@ moves_loop: // When in check, search starts from here
           {
               extension = 1;
               singularLMR = true;
-
-              if (value < singularBeta - std::min(4 * depth, 36))
-				{
-                  singularLMR = true;
-				}	
-				  //from Kelly begin
-				  if(persistedSelfLearning && expTTHit && move == expTTMove)
-				  	{
-				      isSingularExtension = true;
-				    }
-				  //from Kelly end
+			  //from Kelly begin
+			  if(persistedSelfLearning && expTTHit && move == expTTMove)
+			  	{
+			      isSingularExtension = true;
+			    }
+			  //from Kelly end
           }
 
           // Multi-cut pruning
@@ -1274,51 +1323,9 @@ moves_loop: // When in check, search starts from here
       if (type_of(move) == CASTLING)
           extension = 1;
 
-      // Calculate new depth for this move
-      newDepth = depth - 1 + extension;
+      // Add extension to new depth
+      newDepth += extension;
 
-      // Step 14. Pruning at shallow depth (~170 Elo)
-      if (  !rootNode
-          && pos.non_pawn_material(us)
-          && bestValue > VALUE_MATED_IN_MAX_PLY)
-      {
-          // Skip quiet moves if movecount exceeds our FutilityMoveCount threshold
-          moveCountPruning = moveCount >= futility_move_count(improving, depth);
-
-          if (   !captureOrPromotion
-              && !givesCheck
-              && (!PvNode || !pos.advanced_pawn_push(move) || pos.non_pawn_material(~us) > BishopValueMg))
-          {
-              //from Kelly begin
-              if (isSingularExtension && moveCount > 1)
-	      	  {
-            	  continue;
-	      	  }
-              //from Kelly end
-			  
-              // Reduced depth of the next LMR search
-              int lmrDepth = std::max(newDepth - reduction(improving, depth, moveCount), 0);
-
-              // Countermoves based pruning (~20 Elo)
-              if (   lmrDepth < 4 + ((ss-1)->statScore > 0 || (ss-1)->moveCount == 1)
-                  && (*contHist[0])[movedPiece][to_sq(move)] < CounterMovePruneThreshold
-                  && (*contHist[1])[movedPiece][to_sq(move)] < CounterMovePruneThreshold)
-                  continue;
-
-              // Futility pruning: parent node (~2 Elo)
-              if (   lmrDepth < 6
-                  && !inCheck
-                  && ss->staticEval + 250 + 211 * lmrDepth <= alpha)
-                  continue;
-
-              // Prune moves with negative SEE (~10 Elo)
-              if (!pos.see_ge(move, Value(-(31 - std::min(lmrDepth, 18)) * lmrDepth * lmrDepth)))
-                  continue;
-          }
-          else if (  !(givesCheck && extension)
-                   && !pos.see_ge(move, Value(-199) * depth)) // (~20 Elo)
-                  continue;
-      }
 
       skipExtensionAndPruning: //full threads search patch
 
@@ -1354,6 +1361,10 @@ moves_loop: // When in check, search starts from here
               || cutNode))
       {
           Depth r = reduction(improving, depth, moveCount);
+
+          // Decrease reduction if the ttHit running average is large
+          if (thisThread->ttHitAverage > 544 * ttHitAverageResolution * ttHitAverageWindow / 1024)
+              r--;
 
           // Reduction if other threads are searching this position.
           if (th.marked())
