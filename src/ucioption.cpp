@@ -88,7 +88,7 @@ void init(OptionsMap& o) {
   o["Threads"]               << Option(1, 1, 512, on_threads);
   o["Full depth threads"]    << Option(0, 0, 512, on_full_threads); //if this is used, must be after #Threads is set.
   o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
-  o["Large Pages"]           << Option(true, on_large_pages);
+  o["Large Pages"]           << Option(false, on_large_pages);
   o["Clear Hash"]            << Option(on_clear_hash);
   o["Show Fail High and Fail Low"] << Option(true);
   o["Ponder"]                << Option(false);
