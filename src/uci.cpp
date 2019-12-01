@@ -171,6 +171,7 @@ namespace {
     string token;
     uint64_t num, nodes = 0, cnt = 1;
 
+    vector<string> list = setup_bench(pos, args);
     num = count_if(list.begin(), list.end(), [](string s) { return s.find("go ") == 0 || s.find("eval") == 0; });
 
     TimePoint elapsed = now();
@@ -195,7 +196,6 @@ namespace {
         else if (token == "setoption")  setoption(is);
         else if (token == "position")   position(pos, is, states);
         else if (token == "ucinewgame") {
-									 
 	    //from Kelly
             if(Options["NN Persisted Self-Learning"])
               {
@@ -275,7 +275,6 @@ void UCI::loop(int argc, char* argv[]) {
       else if (token == "position")   position(pos, is, states);
 	  else if (token == "ucinewgame")
 	  {
-					   
 	      //from Kelly
 	      if(Options["NN Persisted Self-Learning"]){
 		  maximumPly = 0;
